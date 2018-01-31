@@ -21,6 +21,7 @@ from __future__ import print_function
 import six
 
 from tensorflow.python import pywrap_tensorflow
+from tensorflow.python.framework import ops
 from tensorflow.python.ops import io_ops
 from tensorflow.python.ops import state_ops
 from tensorflow.python.ops import variable_scope as vs
@@ -175,7 +176,8 @@ def init_from_checkpoint(ckpt_dir_or_file, assignment_map):
   ckpt_file = _get_checkpoint_filename(ckpt_dir_or_file)
   reader = load_checkpoint(ckpt_dir_or_file)
   variable_map = reader.get_variable_to_shape_map()
-  for tensor_name_in_ckpt, current_var_or_name in six.iteritems(assignment_map):
+  for tensor_name_in_ckpt, current_var_or_name in sorted(
+      six.iteritems(assignment_map)):
     var = None
     # Check if this is Variable object or list of Variable objects (in case of
     # partitioned variables).
@@ -232,7 +234,7 @@ def init_from_checkpoint(ckpt_dir_or_file, assignment_map):
           if "/part_" in var_name:
             var_name = var_name[:var_name.index("/part_")]
           scope_variables.add(var_name)
-      for var_name in scope_variables:
+      for var_name in sorted(scope_variables):
         # Lookup name with specified prefix and suffix from current variable.
         # If tensor_name given is '/' (root), don't use it for full name.
         full_tensor_name = var_name[len(scopes):]
@@ -240,6 +242,9 @@ def init_from_checkpoint(ckpt_dir_or_file, assignment_map):
           full_tensor_name = full_tensor_name[1:]
         if tensor_name_in_ckpt != "/":
           full_tensor_name = tensor_name_in_ckpt + full_tensor_name
+        # Remove trailing '/', if any, in the full_tensor_name
+        if full_tensor_name.endswith("/"):
+          full_tensor_name = full_tensor_name[:-1]
         if full_tensor_name not in variable_map:
           raise ValueError(
               "Tensor %s (%s in %s) is not found in %s checkpoint" % (
@@ -279,9 +284,10 @@ def _set_checkpoint_initializer(variable,
     name: Name of the operation.
   """
   base_type = variable.dtype.base_dtype
-  restore_op = io_ops.restore_v2(
-      ckpt_file, [tensor_name], [slice_spec], [base_type], name=name)[0]
-  variable._initializer_op = state_ops.assign(variable, restore_op)  # pylint:disable=protected-access
+  with ops.colocate_with(variable):
+    restore_op = io_ops.restore_v2(
+        ckpt_file, [tensor_name], [slice_spec], [base_type], name=name)[0]
+    variable._initializer_op = state_ops.assign(variable, restore_op)  # pylint:disable=protected-access
 
 
 def _set_variable_or_list_initializer(variable_or_list, ckpt_file,
